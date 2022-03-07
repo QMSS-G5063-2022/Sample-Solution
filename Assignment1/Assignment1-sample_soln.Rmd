@@ -1,0 +1,441 @@
+---
+title: "HW 1 Winter Olympics"
+author: 
+date: 
+output: 
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE) 
+```
+
+## Question 1
+
+#### Loading Libraries
+```{r}
+library(ggplot2)    
+library(magrittr)
+library(dplyr)
+library(ggthemes)
+library(ggpubr)
+library(tidyverse)
+library(plotly)
+library(DT)
+library(ggalt)   
+library(ggrepel)
+library(rvest)
+library(stringr)
+library(plotly)
+```
+#### Loading data
+```{r}
+athletes<-read.csv("data/athletes_and_events.csv")
+gdp_pop<-read.csv("data/gdp_pop.csv")
+noc_regions<-read.csv("data/noc_regions.csv")
+```
+
+#### Manipulating and Joining Data
+
+I am choosing to combined all German designations under German and all Russian designation under Russia. All other countries which have changed names over time, I left as is. 
+```{r}
+athletes$NOC[athletes$NOC %in% c("SAA","EUA","GDR","FRG")] <- "GER"
+athletes$NOC[athletes$NOC %in% c("RUS","RU1","URS","EUN",'ROC')] <- "RUS"
+colnames(gdp_pop)[colnames(gdp_pop) == 'Code'] <- 'NOC'
+
+all_data <- athletes %>%
+  left_join(noc_regions, by = 'NOC') %>%
+  left_join(gdp_pop,by='NOC')%>%
+  filter(Season=="Winter")
+```
+#### Calculate the number of Olympics each country participated in.
+```{r}
+all_data %>%
+    filter(Season == "Winter") %>%
+    group_by(region) %>%
+    summarise(Year_Count = n_distinct(Year)) %>%
+    arrange(desc(Year_Count)) %>%
+    head(15)
+```
+### Calculate how many medals each country won over time
+```{r, warning = FALSE}
+top10 <- all_data %>%
+    filter(Season == "Winter") %>%
+    group_by(Country) %>%
+    summarise(count = n_distinct(Sport,Event,Sex,Medal)) %>%
+    arrange(desc(count))%>%
+    select(Country) %>%
+    head(10)
+
+top10_byyear<- all_data %>%
+    filter(Season == "Winter", Medal %in% c("Bronze","Silver","Gold")
+                , Country %in% top10$Country)%>%
+    group_by(Country,Year) %>%
+    summarise(Medal_Count = n_distinct(Games, Year, Season, Medal, Event, Country)) %>%
+    arrange(desc(Medal_Count)) 
+
+top10_byyear
+```
+
+### Graph medals overtime by Country - Top 10 Countries
+
+Here, I graphed this in two different ways. The first is a line graph with the top 10 countries all in one and a second where they are separated in facets.
+```{r}
+plot1<-ggplot(top10_byyear,aes(Year,Medal_Count))+
+  #theme_tufte(base_size = 10)+
+  geom_point(aes(color=Country))+
+  geom_line(aes(color=Country))+
+  scale_color_brewer(palette="Spectral")+
+  #facet_grid(rows = vars(Country))+
+  #facet_wrap(~Country, ncol=3)+
+  labs(x="Year", y="Number of Medals", title="Number of Medals per Year")+
+  theme(legend.position="bottom")+
+  theme(plot.title=element_text(hjust = 0.5))
+
+plot1
+
+ggplot(top10_byyear,aes(Year,Medal_Count))+
+  #theme_tufte(base_size = 10)+
+  geom_point(aes(), color = "blue")+
+  geom_smooth(aes(), color = "blue",size = .5)+
+  facet_grid(rows = vars(Country))+
+  facet_wrap(~Country, ncol=3)+
+  labs(x="Year", y="Number of Medals", title="Number of Medals per Year")+
+  theme(legend.position="none")+
+  theme(plot.title=element_text(hjust = 0.5))
+```
+
+#### Calculating the All-time medal totals by Country
+```{r, warning = FALSE}
+top10 <- all_data %>%
+    filter(Season == "Winter", Medal %in% c("Bronze","Silver","Gold")) %>%
+    group_by(Country) %>%
+    summarise(count = n_distinct(Sport,Event,Sex,Medal,Year)) %>%
+    arrange(desc(count))%>%
+    select(Country) %>%
+    head(10)
+
+totals_all_time<- all_data %>%
+    filter(Season == "Winter", Medal %in% c("Bronze","Silver","Gold")
+                , Country %in% top10$Country)%>%
+    group_by(Country,Medal) %>%
+    summarise(Medal_Count = n_distinct(Games, Year, Season, Medal, Event, Country)) %>%
+    arrange(desc(Medal_Count)) 
+```
+
+#### Graph the all-time medal counts by Country
+```{r}
+ggplot(totals_all_time
+  , aes(x=reorder(Country, desc(Medal_Count), sum), y=Medal_Count, fill=factor(Medal, levels=c("Gold", "Silver", "Bronze")))) +
+  theme_tufte(base_size = 10) +
+  labs(fill = "Medal") +
+  labs(x="Country", y="Number of Medals", title="All Time Medals per Country") +
+geom_bar(stat="identity") +
+  scale_fill_manual(values=c('#D6AF36','#A7A7AD','#A77044'))+
+  theme(plot.title=element_text(hjust = 0.5))
+
+```
+
+
+I would suggest the all-time medal counts by country to my editor. The graph with all of the countries over time is a little bit messy for me. The facets make it a little better, but I still feel like the graph not over time is simpler and better. 
+
+## Question 2
+
+For this question, I am choosing to only look at the Gold medals. 
+
+```{r, warning = FALSE}
+totals_all_time<- all_data %>%
+    filter(Season == "Winter", Medal %in% c("Gold"), not(is.na(GDP.per.Capita)))%>%
+    group_by(Country,Medal,GDP.per.Capita,Population) %>%
+    summarise(Medal_Count = n_distinct(Games, Year, Season, Medal, Event, Country)
+              , GDP_per_Gold = max(GDP.per.Capita)/n_distinct(Games, Year, Season, Medal, Event, Country)
+              , Population_per_Gold = max(Population)/n_distinct(Games, Year, Season, Medal, Event, Country)) %>%
+    arrange((Population_per_Gold)) 
+
+totals_all_time$normal_rank <- rank(desc(totals_all_time$Medal_Count),ties.method = "min")
+totals_all_time$GDP_rank <- rank(totals_all_time$GDP_per_Gold,ties.method = "min")
+totals_all_time$Pop_rank <- rank(totals_all_time$Population_per_Gold,ties.method = "min")
+
+
+pivoted <- totals_all_time %>%
+ gather(normal_rank:Pop_rank, key = "ranking", value = "Rank") %>%
+  arrange(Country)
+
+
+pivoted$order <- case_when(pivoted$ranking =="normal_rank" ~ 1,
+                           pivoted$ranking == "GDP_rank" ~ 2,
+                           pivoted$ranking == "Pop_rank" ~ 3)
+
+#pivoted
+
+Top10Diff <- pivoted %>%
+    group_by(Country) %>% 
+    summarise(range = max(Rank, na.rm=TRUE) - min(Rank, na.rm=TRUE)) %>%
+    arrange(desc(range)) %>%
+    head(10)
+
+pivoted_top10 <-pivoted %>% filter(Country %in% Top10Diff$Country) 
+
+pivoted %>% filter(Country %in% Top10Diff$Country) %>%
+ggplot(aes(x = reorder(ranking,order), y = Rank, group = Country)) +
+  theme_minimal()+
+  geom_line(aes(color = Country), size = 1) +
+  # ("China",'Croatia','Estonia','India','Estonia','Russia','Slovenia','Switz','Ukraine','US')
+  # ("Red",'Green','Green','Black','Black','Red','Green','Black','Black','Red')
+  scale_color_manual(values=c("Red",'forestgreen','forestgreen','Black','Black','Red','forestgreen','Black','Black','Red')) +
+  geom_point(aes(color = Country), size = 2) +
+  scale_y_reverse(breaks = 1:nrow(pivoted)) + 
+  #scale_x_discrete(breaks = 1:10) +
+  theme(legend.position = 'none') +
+  geom_text(data = pivoted_top10 %>% filter(ranking == "Pop_rank"),
+            aes(label = Country, x = 3.2),
+            fontface = "bold", color = "Black", size = 2.5) +
+  labs(x = 'Ranking Type', y = 'Rank', title = "Powerhouses Fall in Population Per Gold Medal", subtitle = 'Gold Medal Ranking (Normal, Adjusted for GDP, Adjusted for Population)')
+
+```
+
+The graph above shows the top 10 countries with the largest difference between any of the ranks. It can be seen that some of the powerhouses (US, Russia, and China) all fall in the rankings when they are adjusted for population. I think this is kinda messy. It is good for looking at one country and seeing the different rankings, but it is bad at comparing different countries, so I separated it into two graphs below.
+
+
+```{r}
+totals_all_time<- all_data %>%
+    filter(Season == "Winter", Medal %in% c("Gold"), not(is.na(GDP.per.Capita)))%>%
+    group_by(Country,Medal,GDP.per.Capita,Population) %>%
+    summarise(Medal_Count = n_distinct(Games, Year, Season, Medal, Event, Country)
+              , GDP_per_Gold = max(GDP.per.Capita)/n_distinct(Games, Year, Season, Medal, Event, Country)
+              , Population_per_Gold = max(Population)/n_distinct(Games, Year, Season, Medal, Event, Country)) %>%
+    arrange((Population_per_Gold)) 
+
+totals_all_time$"Normal Rank"<- rank(desc(totals_all_time$Medal_Count),ties.method = "min")
+totals_all_time$"GDP Rank"<- rank(totals_all_time$GDP_per_Gold,ties.method = "min")
+totals_all_time$"Pop Rank" <- rank(totals_all_time$Population_per_Gold,ties.method = "min")
+totals_all_time$"GDP_Better" <- case_when(totals_all_time$"Normal Rank"< totals_all_time$"GDP Rank" ~ "GDP Rank Worse than Normal",
+                           totals_all_time$"Normal Rank"> totals_all_time$"GDP Rank" ~ "GDP Rank Better than Normal",
+                           TRUE ~ "Identical Ranks")
+totals_all_time$'Pop_Better' <- case_when(totals_all_time$"Normal Rank"< totals_all_time$"Pop Rank" ~ "Pop Rank Worse than Normal",
+                           totals_all_time$"Normal Rank"> totals_all_time$"Pop Rank" ~ "Pop Rank Better than Normal",
+                           TRUE ~ "Identical Ranks")
+
+
+ggplot(totals_all_time,aes(x=totals_all_time$"GDP Rank",y=totals_all_time$"Normal Rank"))+
+    theme_minimal()+
+    geom_point(aes(color=totals_all_time$"GDP_Better"))+
+    scale_color_manual(values=c("forestgreen","red",'blue'))+
+    labs(x="Gold Medal Rank - GDP Adjusted", y="Normal Gold Medal Rank", title="GDP Adjusted Rank by Normal Rank",color='Rank Type')+
+    theme(legend.position="bottom")+
+    theme(plot.title=element_text(hjust = 0.5))+
+    geom_text_repel(aes(label = Country),
+              color = "gray20", size = 1.9)+
+    scale_x_continuous(limits=c(0,35))+
+    scale_y_continuous(limits=c(0,35))+
+    geom_abline(linetype = "dashed")+
+    annotate("text",x=3,y=33,label = c("Better Ranking \nAdjusted for GDP"),size = 4, color = "ForestGreen")+
+    annotate("text",x=33,y=3,label = c("Worse Ranking \nAdjusted for GDP"),size = 4, color = "Red")
+
+```
+
+
+The graph above shows that Russia, United States, China, Italy, etc (all Countries in Green) performed better after adjusting for GDP. The countries in red performed worse after adjusting for GDP.
+
+```{r}
+ggplot(totals_all_time,aes(x=totals_all_time$"Pop Rank",y=totals_all_time$"Normal Rank"))+
+    theme_minimal()+
+    geom_point(aes(color=totals_all_time$"Pop_Better"))+
+    scale_color_manual(values=c("blue","forestgreen",'red'))+
+    labs(x="Gold Medal Rank - Pop Adjusted", y="Normal Gold Medal Rank", title="Pop Adjusted Rank by Normal Rank",subtitle = "Superpowers Fall",color='Rank Type')+
+    theme(legend.position="bottom")+
+    geom_text_repel(aes(label = Country),
+              color = "gray20", size = 1.9)+
+    scale_x_continuous(limits=c(0,35))+
+    scale_y_continuous(limits=c(0,35))+
+    geom_abline(linetype = "dashed")+
+    annotate("text",x=3,y=33,label = c("Better Ranking \nAdjusted for Pop"),size = 4, color = "ForestGreen")+
+    annotate("text",x=33,y=3,label = c("Worse Ranking \nAdjusted for Pop"),size = 4, color = "Red")
+
+```
+
+The graph above shows that some of the olympic super powers: Russia, United States, Germany, China, Canada, etc (all Countries in red) performed much worse after adjusting for population. The countries in green performed better after adjusting for Population.
+
+## Question 3: Host Country Advantage
+
+### Setting up data set
+
+```{r}
+
+wiki_hosts <- read_html("https://en.wikipedia.org/wiki/List_of_Olympic_Games_host_cities")
+hosts <- html_table(html_nodes(wiki_hosts, "table")[[2]], fill=TRUE)[-1]
+winter_hosts<-hosts %>% filter(Winter != "", Year<='2016') %>%
+  rename(Host_City = City) %>%
+  rename(Host_Country = Country)%>% 
+  select(Host_City, Host_Country, Year)
+#winter_hosts
+
+all_with_host <- all_data %>%
+  left_join(winter_hosts, by = 'Year')
+
+all_with_host$host_nationality_flag[all_with_host$Host_Country == all_with_host$Country] <- "Host"
+all_with_host$host_nationality_flag[all_with_host$Host_Country != all_with_host$Country] <- "Not_Host"
+```
+
+### Visualizing the Advantage/Disadvantage
+
+```{r}
+hosting_averages<- all_with_host %>%
+  filter(Medal %in% c("Gold",'Silver','Bronze'))%>%
+  filter(Country %in% winter_hosts$Host_Country) %>%
+    group_by(Country,host_nationality_flag) %>%
+    summarise(Average_Medals_Per_Olympics = n_distinct(Games, Year, Season, Medal, Event, Country)/ n_distinct(Games,Year,Country))%>%
+  #spread(key = host_nationality_flag, value = Medal_Count) %>%
+  arrange(Country)
+
+data<-hosting_averages%>%
+  spread(key = host_nationality_flag, value = Average_Medals_Per_Olympics) %>%
+  arrange(Not_Host)
+
+
+data$Difference <- round(data$Host -  data$Not_Host,2)
+data$Positive_Color <- case_when(data$Difference < 0 ~ "#EF2A2A",
+                                        data$Difference >0 ~"#38CF4C")
+data$Positive <- case_when(data$Difference < 0 ~ 0,
+                                        data$Difference >0 ~ 1)
+
+hosting_averages<- hosting_averages %>%
+  left_join(data, by = 'Country')
+
+#hosting_averages
+#data
+
+
+plot2<-ggplot() +
+    theme_minimal() +
+    geom_point(data=hosting_averages, 
+               aes(y=reorder(Country,Difference)
+                   , x=Average_Medals_Per_Olympics, fill=host_nationality_flag),
+               size=6, shape=21, color="grey30") +
+    geom_segment(data=data, 
+                 aes(y=fct_reorder2(Country,Not_Host,Positive), yend=fct_reorder2(Country,Not_Host,Positive)
+                     , x=Not_Host, xend=Host,color=Positive_Color),
+                 size=1.8,
+                 lineend="butt", linejoin="mitre",
+                 arrow=arrow(length = unit(0.01, "npc"), type="closed")) +
+    scale_color_identity() +
+    scale_fill_manual(values=c("gold","grey"),labels = c("Host", "Not Host"))+
+    labs(x="Average Medals Per Olympics", y=NULL, title="Average Medals per Olympics by Hosting Status",fill='Hosting Status')+
+    geom_rect(data, mapping = aes(xmin=21, xmax=25, ymin=-Inf, ymax=Inf),fill="light blue") +
+    geom_text(data, mapping = aes(label=Difference, y=Country, x=23), size=3) +
+    geom_text(data=filter(data, Country=="Canada"), 
+            mapping = aes(x=23, y=Country, label="Difference"),
+                          size=3.1, vjust=-2, fontface="bold") +
+    scale_x_continuous(limits=c(0, 25)) +
+    scale_y_discrete(expand=c(0.14,0))
+
+plot2
+```
+
+Of the countries who have hosted, 6 of the countries have a higher average medals per Olympics hosted than not hosted. Some countries appear to have more of an advantage when they hosted. For example,  Only 3 seem to have a disadvantage when hosting: Austria, Switzerland, and Germany.
+
+## Question 4: Most Successful Athletes
+
+```{r}
+#all_data
+successful<-all_data %>%
+  filter(Medal %in% c("Gold",'Silver','Bronze'))%>%
+    group_by(ID, Name, Sex) %>%
+      summarise(Medal_Count = n_distinct(Sport,Event,Sex,Medal,Year)) %>%
+        arrange(desc(Medal_Count))%>%
+          head(17)
+
+successful
+  
+ggplot(data=successful
+  , aes(x=Medal_Count, y=reorder(reorder(Name,Sex), Medal_Count, sum), fill=factor(Sex))) +
+  theme_minimal()+
+  labs(fill = "Sex") +
+  labs(x="Medal Count", y="Athlete", title="Top 17 Most Successful Athletes") +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values=c('maroon','sky blue'))+
+  theme(plot.title=element_text(hjust = 0.5))
+  
+```
+
+
+The chart above shows the total medals earned by the 17 most successful winter athletes by the total numbers of medals won.
+
+
+
+```{r}
+
+athlete_dimensions <- all_data %>%
+  filter(Medal %in% c("Gold",'Silver','Bronze'),not(is.na(Height)),not(is.na(Weight))) %>%
+    distinct(Name, Sport,Sex,Height, Weight)
+
+ave_dimensions<- athlete_dimensions %>%
+    group_by(Sport,Sex) %>%
+      summarise(Avg_Height = mean(Height)
+                , Ave_Weight = mean(Weight))
+
+ggplot(data=ave_dimensions
+  , aes(x=Avg_Height, y=Ave_Weight, color =Sex)) +
+  theme_minimal()+
+  labs(x="Average Height(cm)", y="Average Weight", title="Average Height and Weight of Medal Winners per Sport") +
+  geom_point() +
+  theme(plot.title=element_text(hjust = 0.5))+
+    geom_text_repel(aes(label = Sport),
+              color = "gray20", size = 1.9)
+
+```
+
+The graph above displays the average height and weight of Olympic athletes who won medals. The graph is also grouped by Sex.
+
+## Question 5: Interactive Graphs
+
+#### Use ggplotly to make the Number of Medals per Year graph interactive
+
+```{r}
+ggplotly(plot1)
+```
+
+
+I like the graph above a little bit more when it is interactive. A user can click on the countries to tell which is which.
+
+#### Use plot_ly to make the Average Height and Weight graph interactive
+```{r}
+athlete_dimensions <- all_data %>%
+  filter(Medal %in% c("Gold",'Silver','Bronze'),not(is.na(Height)),not(is.na(Weight))) %>%
+    distinct(Name, Sport,Sex, Height, Weight)
+
+ave_dimensions<- athlete_dimensions %>%
+    group_by(Sport,Sex) %>%
+      summarise(Avg_Height = mean(Height)
+                , Ave_Weight = mean(Weight))
+
+fig = plot_ly(ave_dimensions, x=~Avg_Height, y=~Ave_Weight
+              , color=~Sex,colors = c("red", "blue")
+              , type = "scatter", mode='markers'
+              , text = ~paste('Sport: ', Sport)) %>% layout(title = 'Average Height and Weight of Medal Winners per Sport')
+
+
+fig
+
+```
+
+I like this version of the graph because in the static version, some of the labels were hard to tell which point they belonged to. In this version, the user can hover on the point and see the exact statistics as well as the exact sport the point belongs to.
+
+
+
+## Question 6: add data table
+```{r}
+
+table_data<- all_data %>%
+    filter(Season == "Winter", Medal %in% c("Gold",'Silver','Bronze'), not(is.na(GDP.per.Capita)))%>%
+    group_by(Country,Medal,GDP.per.Capita,Population) %>%
+    summarise(Medal_Count = n_distinct(Games, Year, Season, Medal, Event, Country),
+              Athlete_Count = n_distinct(Name)
+              ) %>%
+    arrange((Country)) 
+
+datatable(totals_all_time, rownames = FALSE,
+    filter = list(position = "top"),
+    options = list(language = list(sSearch = "Filter:")))
+```
